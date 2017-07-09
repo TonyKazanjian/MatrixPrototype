@@ -10,15 +10,11 @@ import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.widget.ImageView;
-
-import com.makeramen.roundedimageview.RoundedImageView;
-import com.makeramen.roundedimageview.RoundedTransformationBuilder;
-import com.squareup.picasso.Picasso;
-import com.squareup.picasso.Transformation;
 
 public class PodViewActivity extends AppCompatActivity {
 
@@ -29,6 +25,13 @@ public class PodViewActivity extends AppCompatActivity {
     private int mImageHeight, mImageWidth;
 
     private ImageView mImageView;
+
+    private GestureDetector mGestureDetector;
+    // needed for detecting the inversed rotations
+    private boolean[] quadrantTouched;
+
+    private boolean mAllowRotating;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,6 +51,12 @@ public class PodViewActivity extends AppCompatActivity {
             // not needed, you can also post the matrix immediately to restore the old state
             sMatrix.reset();
         }
+
+        mGestureDetector = new GestureDetector(this, new MyGestureDetector());
+        // there is no 0th quadrant, to keep it simple the first value gets ignored
+        quadrantTouched = new boolean[] { false, false, false, false, false };
+
+        mAllowRotating = true;
 
         mImageView = (ImageView) findViewById(R.id.image);
         mImageView.setOnTouchListener(new TouchListener());
@@ -111,6 +120,13 @@ public class PodViewActivity extends AppCompatActivity {
 
             switch (motionEvent.getAction()) {
                 case MotionEvent.ACTION_DOWN:
+
+                    // reset the touched quadrants
+                    for (int i = 0; i < quadrantTouched.length; i++) {
+                        quadrantTouched[i] = false;
+                    }
+
+                    mAllowRotating = false;
                     startAngle = getAngle(motionEvent.getX(), motionEvent.getY());
                     break;
                 case MotionEvent.ACTION_MOVE:
@@ -119,11 +135,17 @@ public class PodViewActivity extends AppCompatActivity {
                     startAngle = currentAngle;
                     break;
                 case MotionEvent.ACTION_UP:
-                    //TODO - FLING!
+                    mAllowRotating = true;
 
                     break;
 
             }
+
+            // set the touched quadrant to true
+            quadrantTouched[getQuadrant(motionEvent.getX() - (mImageWidth / 2), mImageHeight - motionEvent.getY() -
+                    (mImageHeight / 2))] = true;
+
+            mGestureDetector.onTouchEvent(motionEvent);
 
             return true;
         }
@@ -163,7 +185,7 @@ public class PodViewActivity extends AppCompatActivity {
     }
 
     /**
-     * Roate the image
+     * Rotate the image
      *
      * @param degrees The degrees the image should be rotated
      */
@@ -171,4 +193,56 @@ public class PodViewActivity extends AppCompatActivity {
         sMatrix.postRotate(degrees, mImageWidth / 2, mImageHeight / 2);
         mImageView.setImageMatrix(sMatrix);
     }
+
+    private class MyGestureDetector extends GestureDetector.SimpleOnGestureListener {
+        @Override
+        public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+
+            // get the quadrant of the start and the end of the fling
+            int q1 = getQuadrant(e1.getX() - (mImageWidth / 2), mImageHeight - e1.getY() -
+                    (mImageHeight / 2));
+            int q2 = getQuadrant(e2.getX() - (mImageWidth / 2), mImageHeight - e2.getY() -
+                    (mImageHeight / 2));
+
+            // the inversed rotations
+            if ((q1 == 2 && q2 == 2 && Math.abs(velocityX) < Math.abs(velocityY))
+                    || (q1 == 3 && q2 == 3)
+                    || (q1 == 1 && q2 == 3)
+                    || (q1 == 4 && q2 == 4 && Math.abs(velocityX) > Math.abs(velocityY))
+                    || ((q1 == 2 && q2 == 3) || (q1 == 3 && q2 == 2))
+                    || ((q1 == 3 && q2 == 4) || (q1 == 4 && q2 == 3))
+                    || (q1 == 2 && q2 == 4 && quadrantTouched[3])
+                    || (q1 == 4 && q2 == 2 && quadrantTouched[3])) {
+
+                mImageView.post(new FlingRunnable(-1 * (velocityX + velocityY)));
+            } else {
+                // the normal rotation
+                mImageView.post(new FlingRunnable(velocityX + velocityY));
+            }
+            return true;
+        }
+    }
+    /**
+     * A {@link Runnable} for animating the the dialer's fling. Manipulates GUI on main thread
+     */
+    private class FlingRunnable implements Runnable {
+
+        private float velocity;
+
+        public FlingRunnable(float velocity) {
+            this.velocity = velocity;
+        }
+
+        @Override
+        public void run() {
+            if (Math.abs(velocity) > 5 && mAllowRotating) {
+                rotateImage(velocity / 75);
+                velocity /= 1.0666F;
+
+                // post this instance again
+                mImageView.post(this);
+            }
+        }
+    }
+
 }
